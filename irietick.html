@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRIEtick Studio - Générateur de Tickets</title>
+    
+    <!-- Tailwind CSS v3.4 (Stable & Compatible html2canvas) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter for UI, Helvetica/Arial used for Ticket for stability -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* 
+        ========================================
+        TICKET STYLING (CUSTOM CSS - NO TAILWIND)
+        Designed for html2canvas compatibility.
+        Using CSS Variables for dynamic coloring.
+        ========================================
+        */
+        :root {
+            /* Default values, overridden by JS */
+            --ticket-width: 900px;
+            --ticket-height: 480px;
+            --stub-width: 240px;
+            --t-bg: #ffffff;
+            --t-text: #1a1a1a;
+            --t-accent: #000000;
+        }
+
+        /* Container for the ticket structure */
+        .iri-ticket {
+            position: relative;
+            background-color: var(--t-bg);
+            color: var(--t-text);
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15); /* Nice shadow for preview */
+            display: flex;
+            flex-direction: row; /* Default Desktop/Export */
+            border-radius: 16px;
+            box-sizing: border-box;
+            /* Force exact size for export stability */
+            width: var(--ticket-width);
+            height: var(--ticket-height);
+        }
+
+        /* Reset all elements inside ticket to box-border */
+        .iri-ticket * {
+            box-sizing: border-box;
+        }
+
+        /* Background Image Layer */
+        .iri-ticket-bg-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-position: center;
+            z-index: 0;
+        }
+
+        /* Overlay Layer (controls opacity/tint) */
+        .iri-ticket-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* Gradient will be set via JS to handle opacity */
+            z-index: 1;
+        }
+
+        /* Content Wrapper */
+        .iri-ticket-content {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* LEFT SIDE: Main Info */
+        .iri-main-section {
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            border-right: 2px dashed #ccc; /* Will be colored by accent in JS if needed */
+            position: relative;
+            border-color: rgba(0,0,0,0.1);
+        }
+
+        /* Cutout circles for perforation effect */
+        .iri-cutout-top, .iri-cutout-bottom {
+            position: absolute;
+            right: -14px;
+            width: 28px;
+            height: 28px;
+            background-color: #f3f4f6; /* Matches UI bg - hardcoded for now or transparent */
+            border-radius: 50%;
+            z-index: 20;
+        }
+        /* Fix for cutout bg color to match the preview container background */
+        .preview-mode .iri-cutout-top, .preview-mode .iri-cutout-bottom { background-color: #e5e7eb; }
+        .export-mode .iri-cutout-top, .export-mode .iri-cutout-bottom { background-color: transparent; } /* Or white if printing on white paper */
+
+        .iri-cutout-top { top: -14px; }
+        .iri-cutout-bottom { bottom: -14px; }
+
+        .iri-header h1 {
+            font-size: 38px;
+            font-weight: 800;
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+            line-height: 1.0;
+            letter-spacing: -1px;
+            color: var(--t-accent);
+        }
+
+        .iri-meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-top: 10px;
+        }
+
+        .iri-meta-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .iri-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            opacity: 0.7; /* Instead of color, use opacity of main text */
+            margin-bottom: 6px;
+            font-weight: 700;
+        }
+
+        .iri-value {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .iri-footer {
+            margin-top: auto;
+            padding-top: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .iri-price-tag {
+            font-size: 36px;
+            font-weight: 800;
+            color: var(--t-accent);
+        }
+
+        .iri-ticket-id {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            opacity: 0.8;
+            line-height: 1.4;
+        }
+
+        /* RIGHT SIDE: Stub (Talon) */
+        .iri-stub-section {
+            width: var(--stub-width);
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background: rgba(255,255,255,0.15); /* Subtle distinction */
+            backdrop-filter: blur(5px);
+        }
+
+        .iri-qr-container {
+            width: 150px;
+            height: 150px;
+            background: white;
+            padding: 8px;
+            margin-bottom: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        
+        .iri-qr-container img {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .iri-stub-info h2 {
+            font-size: 14px;
+            margin: 0 0 8px 0;
+            font-weight: 700;
+            color: var(--t-accent);
+            text-transform: uppercase;
+            line-height: 1.2;
+        }
+
+        .iri-stub-info p {
+            font-size: 12px;
+            margin: 0;
+            opacity: 0.8;
+        }
+
+        /* 
+        RESPONSIVE PREVIEW (Mobile View)
+        We scale down the ticket using CSS transform rather than reflowing layout
+        to preserve the exact look, OR we reflow if requested.
+        Here we stick to the requested behavior: Mobile = Vertical Stack.
+        */
+        @media (max-width: 950px) {
+            /* Only apply this vertical stacking in the PREVIEW container, not during export */
+            .iri-ticket-preview-wrapper .iri-ticket {
+                flex-direction: column;
+                width: 100% !important; 
+                max-width: 400px; /* Mobile width constraint */
+                height: auto !important;
+                min-height: 600px;
+            }
+
+            .iri-ticket-preview-wrapper .iri-main-section {
+                border-right: none;
+                border-bottom: 2px dashed rgba(0,0,0,0.1);
+                padding: 30px;
+            }
+
+            .iri-ticket-preview-wrapper .iri-stub-section {
+                width: 100% !important;
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 20px;
+                text-align: left;
+                background: rgba(0,0,0,0.03);
+            }
+
+            .iri-ticket-preview-wrapper .iri-qr-container {
+                width: 80px;
+                height: 80px;
+                margin-bottom: 0;
+                margin-right: 20px;
+            }
+
+            .iri-ticket-preview-wrapper .iri-cutout-top {
+                top: auto;
+                bottom: -14px;
+                left: -14px;
+                right: auto;
+            }
+            
+            .iri-ticket-preview-wrapper .iri-cutout-bottom {
+                top: auto;
+                bottom: -14px;
+                right: -14px;
+                left: auto;
+            }
+        }
+
+        /* 
+        EXPORT MODE (Forces Desktop Layout)
+        Matches exact pixels for html2canvas
+        */
+        .iri-export-mode .iri-ticket {
+            width: var(--ticket-width) !important;
+            height: var(--ticket-height) !important;
+            flex-direction: row !important;
+            border-radius: 0 !important; /* Sharp corners for clean cut/print usually preferred, or keep radius */
+            box-shadow: none !important;
+        }
+        .iri-export-mode .iri-main-section {
+            border-right: 2px dashed #999 !important;
+            border-bottom: none !important;
+        }
+        .iri-export-mode .iri-stub-section {
+            width: var(--stub-width) !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            text-align: center !important;
+        }
+        .iri-export-mode .iri-qr-container {
+            width: 150px !important;
+            height: 150px !important;
+            margin-right: 0 !important;
+            margin-bottom: 20px !important;
+        }
+        .iri-export-mode .iri-cutout-top { top: -14px !important; bottom: auto !important; left: auto !important; right: -14px !important; }
+        .iri-export-mode .iri-cutout-bottom { top: auto !important; bottom: -14px !important; left: auto !important; right: -14px !important; }
+
+        /* Helper for hiding elements */
+        .hidden-offscreen {
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* UI Styles */
+        .color-input-wrapper input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        .color-input-wrapper input[type="color"]::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        .color-input-wrapper input[type="color"]::-webkit-color-swatch {
+            border: 2px solid #e5e7eb;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans h-screen flex overflow-hidden selection:bg-brand-500 selection:text-white">
+
+    <!-- SIDEBAR -->
+    <aside class="w-full md:w-[400px] bg-white shadow-2xl z-30 flex flex-col h-full border-r border-gray-100 flex-shrink-0 relative">
+        
+        <!-- Header -->
+        <div class="p-6 border-b border-gray-100 bg-white z-10">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-brand-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-brand-500/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-gray-900">IRIEtick Studio</h1>
+                    <p class="text-gray-400 text-xs font-medium">Générateur de Billetterie Pro</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scrollable Content -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar">
+            <div class="p-6 space-y-8">
+                
+                <!-- Section: Event -->
+                <div class="space-y-4">
+                    <div class="flex items-center gap-2 text-brand-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-widest">Informations</h3>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Événement</label>
+                        <input type="text" id="input-event" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 transition-all text-sm py-2.5 px-3 font-semibold text-gray-700" value="FESTIVAL D'ÉTÉ 2024">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Date</label>
+                            <input type="date" id="input-date" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="2024-07-15">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Heure</label>
+                            <input type="time" id="input-time" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="20:00">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Lieu</label>
+                        <input type="text" id="input-location" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="Grand Hall, Paris">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Prix</label>
+                            <input type="text" id="input-price" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3 font-bold" value="45.00 €">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Marque Footer</label>
+                            <input type="text" id="input-footer" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="IRIE PROD">
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="border-gray-100">
+
+                <!-- Section: Colors & Style -->
+                <div class="space-y-4">
+                    <div class="flex items-center gap-2 text-brand-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-widest">Personnalisation</h3>
+                    </div>
+
+                    <!-- Colors -->
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="color-input-wrapper flex flex-col items-center">
+                            <input type="color" id="input-col-bg" value="#ffffff">
+                            <label class="text-[10px] uppercase font-bold text-gray-400 mt-1">Fond</label>
+                        </div>
+                        <div class="color-input-wrapper flex flex-col items-center">
+                            <input type="color" id="input-col-text" value="#1a1a1a">
+                            <label class="text-[10px] uppercase font-bold text-gray-400 mt-1">Texte</label>
+                        </div>
+                        <div class="color-input-wrapper flex flex-col items-center">
+                            <input type="color" id="input-col-accent" value="#0284c7">
+                            <label class="text-[10px] uppercase font-bold text-gray-400 mt-1">Accent</label>
+                        </div>
+                    </div>
+
+                    <!-- Background Image -->
+                    <div class="pt-2">
+                        <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Image de fond</label>
+                        <div class="flex gap-2">
+                            <label class="flex-1 cursor-pointer bg-white border border-dashed border-gray-300 rounded-lg p-3 text-center hover:bg-gray-50 hover:border-brand-300 transition group">
+                                <span class="text-xs font-medium text-gray-600 group-hover:text-brand-600 flex flex-col items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                    Uploader Image
+                                </span>
+                                <input type="file" id="input-image" accept="image/*" class="hidden">
+                            </label>
+                            <button id="btn-remove-img" class="w-12 flex items-center justify-center bg-red-50 text-red-500 rounded-lg border border-red-100 hover:bg-red-100 transition hidden">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between mb-1.5">
+                            <label class="block text-xs font-medium text-gray-500 uppercase">Opacité Overlay</label>
+                            <span class="text-xs font-bold text-brand-600 bg-brand-50 px-2 rounded" id="opacity-val">85%</span>
+                        </div>
+                        <input type="range" id="input-opacity" min="0" max="100" value="85" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-brand-600">
+                    </div>
+                </div>
+
+                <hr class="border-gray-100">
+
+                <!-- Section: Generation -->
+                <div class="space-y-4">
+                    <div class="flex items-center gap-2 text-brand-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                        <h3 class="text-xs font-bold uppercase tracking-widest">Production</h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">Quantité</label>
+                            <input type="number" id="input-qty" min="1" max="500" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="10">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase">ID Départ</label>
+                            <input type="number" id="input-start-id" min="1" class="w-full rounded-lg bg-gray-50 border-gray-200 focus:border-brand-500 focus:ring-brand-500 text-sm py-2.5 px-3" value="1001">
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="p-6 border-t border-gray-100 bg-gray-50 z-10">
+            <button id="btn-download" class="w-full bg-gray-900 hover:bg-black text-white font-bold py-3.5 px-4 rounded-xl shadow-xl shadow-gray-400/20 flex items-center justify-center gap-3 transition-all transform active:scale-[0.98]">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>Télécharger les Tickets</span>
+            </button>
+            <p class="text-center text-[10px] text-gray-400 mt-3">Format ZIP • PNG Haute Qualité (480px Hauteur)</p>
+        </div>
+    </aside>
+
+    <!-- MAIN PREVIEW AREA -->
+    <main class="flex-1 overflow-auto bg-gray-100 relative flex flex-col h-full">
+        
+        <!-- Toolbar -->
+        <div class="h-16 bg-white/90 backdrop-blur-sm border-b border-gray-200 flex items-center justify-between px-8 sticky top-0 z-20 shadow-sm">
+            <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Prévisualisation en Direct</h2>
+            <div class="flex items-center gap-3">
+                <span class="px-3 py-1 bg-brand-50 text-brand-700 text-xs rounded-full font-mono border border-brand-100">900px × 480px</span>
+                <span class="w-px h-4 bg-gray-300"></span>
+                <span class="text-xs text-gray-400">Rendu Pixel-Perfect</span>
+            </div>
+        </div>
+
+        <!-- Canvas Background with Pattern -->
+        <div class="flex-1 flex items-center justify-center p-8 relative">
+            <!-- decorative background pattern -->
+            <div class="absolute inset-0 z-0 opacity-[0.03]" style="background-image: radial-gradient(#000 1px, transparent 1px); background-size: 20px 20px;"></div>
+
+            <!-- Ticket Wrapper -->
+            <div id="preview-wrapper" class="iri-ticket-preview-wrapper w-full max-w-[900px] transition-all duration-300 z-10 preview-mode">
+                <!-- PREVIEW TICKET WILL BE INJECTED HERE -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- HIDDEN EXPORT STAGE (Always Desktop Size) -->
+    <div id="export-stage" class="hidden-offscreen iri-export-mode export-mode">
+        <!-- TICKET FOR CAPTURE WILL BE INJECTED HERE -->
+    </div>
+
+    <!-- LOADING OVERLAY -->
+    <div id="loading-overlay" class="fixed inset-0 bg-gray-900/90 backdrop-blur-md z-50 hidden flex flex-col items-center justify-center text-white">
+        <div class="w-16 h-16 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+        <h3 class="text-2xl font-bold mb-2">Génération des tickets...</h3>
+        <p class="text-gray-400 mb-8 font-light">Préparation de votre archive ZIP</p>
+        
+        <div class="w-64 bg-gray-800 rounded-full h-2 overflow-hidden mb-4">
+            <div id="progress-bar" class="bg-brand-500 h-full w-0 transition-all duration-100 ease-out shadow-[0_0_10px_rgba(14,165,233,0.5)]"></div>
+        </div>
+        <p class="text-xs font-mono text-gray-500">Traitement : <span id="progress-text" class="text-white">0</span> / <span id="progress-total">0</span></p>
+    </div>
+
+    <!-- TEMPLATE (Not rendered directly, used by JS to clone) -->
+    <template id="ticket-template">
+        <div class="iri-ticket">
+            <!-- Background Image -->
+            <div class="iri-ticket-bg-layer" id="t-bg"></div>
+            <!-- Overlay -->
+            <div class="iri-ticket-overlay" id="t-overlay"></div>
+
+            <div class="iri-ticket-content">
+                <!-- LEFT SECTION -->
+                <div class="iri-main-section">
+                    <div class="iri-header">
+                        <h1 id="t-event">NOM DE L'ÉVÉNEMENT</h1>
+                    </div>
+                    
+                    <div class="iri-meta-grid">
+                        <div class="iri-meta-item">
+                            <span class="iri-label">Date</span>
+                            <span class="iri-value" id="t-date">01/01/2024</span>
+                        </div>
+                        <div class="iri-meta-item">
+                            <span class="iri-label">Heure</span>
+                            <span class="iri-value" id="t-time">20:00</span>
+                        </div>
+                        <div class="iri-meta-item" style="grid-column: span 2;">
+                            <span class="iri-label">Lieu</span>
+                            <span class="iri-value" id="t-location">Lieu de l'événement</span>
+                        </div>
+                    </div>
+
+                    <div class="iri-footer">
+                        <div class="iri-ticket-id">
+                            ID: #<span id="t-id">0000</span><br>
+                            UID: <span id="t-uid">ABC-123</span>
+                        </div>
+                        <div class="iri-price-tag" id="t-price">0 €</div>
+                    </div>
+
+                    <!-- Cutouts -->
+                    <div class="iri-cutout-top"></div>
+                    <div class="iri-cutout-bottom"></div>
+                </div>
+
+                <!-- RIGHT SECTION (STUB) -->
+                <div class="iri-stub-section">
+                    <div class="iri-qr-container" id="t-qrcode"></div>
+                    <div class="iri-stub-info">
+                        <h2 id="t-event-stub">EVENT</h2>
+                        <p id="t-date-stub">01/01/2024</p>
+                        <div style="margin-top: 10px; font-weight: bold;" id="t-footer">MARQUE</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script>
+        /**
+         * APPLICATION STATE & CONFIG
+         */
+        const state = {
+            event: '',
+            date: '',
+            time: '',
+            location: '',
+            price: '',
+            footer: '',
+            bgImage: null,
+            bgOpacity: 0.85,
+            qty: 10,
+            startId: 1001,
+            // Colors
+            colBg: '#ffffff',
+            colText: '#1a1a1a',
+            colAccent: '#0284c7'
+        };
+
+        // DOM Elements
+        const inputs = {
+            event: document.getElementById('input-event'),
+            date: document.getElementById('input-date'),
+            time: document.getElementById('input-time'),
+            location: document.getElementById('input-location'),
+            price: document.getElementById('input-price'),
+            footer: document.getElementById('input-footer'),
+            image: document.getElementById('input-image'),
+            opacity: document.getElementById('input-opacity'),
+            qty: document.getElementById('input-qty'),
+            startId: document.getElementById('input-start-id'),
+            // Color Inputs
+            colBg: document.getElementById('input-col-bg'),
+            colText: document.getElementById('input-col-text'),
+            colAccent: document.getElementById('input-col-accent'),
+        };
+
+        const ui = {
+            removeImgBtn: document.getElementById('btn-remove-img'),
+            opacityVal: document.getElementById('opacity-val'),
+            previewWrapper: document.getElementById('preview-wrapper'),
+            exportStage: document.getElementById('export-stage'),
+            downloadBtn: document.getElementById('btn-download'),
+            loadingOverlay: document.getElementById('loading-overlay'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            progressTotal: document.getElementById('progress-total'),
+        };
+
+        const ticketTemplate = document.getElementById('ticket-template');
+
+        /**
+         * INITIALIZATION & EVENT LISTENERS
+         */
+        function init() {
+            // Attach listeners
+            Object.values(inputs).forEach(input => {
+                input.addEventListener('input', updateStateAndPreview);
+            });
+
+            inputs.image.addEventListener('change', handleImageUpload);
+            ui.removeImgBtn.addEventListener('click', removeBgImage);
+            ui.downloadBtn.addEventListener('click', downloadAllTickets);
+
+            // Initial render
+            updateStateAndPreview();
+        }
+
+        /**
+         * CORE FUNCTIONS
+         */
+
+        function updateStateAndPreview() {
+            // Update State
+            state.event = inputs.event.value || 'EVENT NAME';
+            state.date = inputs.date.value;
+            state.time = inputs.time.value;
+            state.location = inputs.location.value;
+            state.price = inputs.price.value;
+            state.footer = inputs.footer.value;
+            state.bgOpacity = inputs.opacity.value / 100;
+            state.qty = parseInt(inputs.qty.value) || 1;
+            state.startId = parseInt(inputs.startId.value) || 1001;
+            
+            // Update Colors
+            state.colBg = inputs.colBg.value;
+            state.colText = inputs.colText.value;
+            state.colAccent = inputs.colAccent.value;
+
+            // Update UI Labels
+            ui.opacityVal.innerText = inputs.opacity.value + '%';
+
+            // Render Preview
+            renderTicket(ui.previewWrapper, {
+                id: state.startId,
+                uid: 'PREVIEW-UID-123',
+                qrData: 'PREVIEW-DATA'
+            });
+        }
+
+        function handleImageUpload(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    state.bgImage = event.target.result;
+                    ui.removeImgBtn.classList.remove('hidden');
+                    updateStateAndPreview();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function removeBgImage() {
+            state.bgImage = null;
+            inputs.image.value = '';
+            ui.removeImgBtn.classList.add('hidden');
+            updateStateAndPreview();
+        }
+
+        // Helper to format date
+        function formatDate(dateStr) {
+            if (!dateStr) return 'TBA';
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        // Helper: Convert Hex to RGB for rgba usage
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 255, g: 255, b: 255 };
+        }
+
+        /**
+         * RENDER TICKET
+         * Fills a container with the ticket DOM based on template and state
+         */
+        function renderTicket(container, ticketData) {
+            container.innerHTML = ''; // Clear previous
+            const clone = ticketTemplate.content.cloneNode(true);
+            const ticketRoot = clone.querySelector('.iri-ticket');
+
+            // Apply CSS Variables for Colors
+            ticketRoot.style.setProperty('--t-bg', state.colBg);
+            ticketRoot.style.setProperty('--t-text', state.colText);
+            ticketRoot.style.setProperty('--t-accent', state.colAccent);
+
+            // Elements within clone
+            const bg = clone.getElementById('t-bg');
+            const overlay = clone.getElementById('t-overlay');
+            const eventEl = clone.getElementById('t-event');
+            const dateEl = clone.getElementById('t-date');
+            const timeEl = clone.getElementById('t-time');
+            const locEl = clone.getElementById('t-location');
+            const priceEl = clone.getElementById('t-price');
+            const footerEl = clone.getElementById('t-footer');
+            const idEl = clone.getElementById('t-id');
+            const uidEl = clone.getElementById('t-uid');
+            const qrContainer = clone.getElementById('t-qrcode');
+            
+            // Stub elements
+            const stubEvent = clone.getElementById('t-event-stub');
+            const stubDate = clone.getElementById('t-date-stub');
+
+            // Apply Data
+            eventEl.innerText = state.event;
+            stubEvent.innerText = state.event.length > 20 ? state.event.substring(0, 18) + '...' : state.event;
+            
+            const formattedDate = formatDate(state.date);
+            dateEl.innerText = formattedDate;
+            stubDate.innerText = formattedDate + ' ' + state.time;
+            
+            timeEl.innerText = state.time;
+            locEl.innerText = state.location;
+            priceEl.innerText = state.price;
+            footerEl.innerText = state.footer;
+            
+            idEl.innerText = String(ticketData.id).padStart(4, '0');
+            uidEl.innerText = ticketData.uid;
+
+            // Styles
+            if (state.bgImage) {
+                bg.style.backgroundImage = `url('${state.bgImage}')`;
+            } else {
+                bg.style.backgroundImage = 'none';
+            }
+            
+            // Dynamic Overlay Gradient based on Background Color + Opacity
+            const rgb = hexToRgb(state.colBg);
+            const op = state.bgOpacity;
+            overlay.style.background = `linear-gradient(90deg, 
+                rgba(${rgb.r},${rgb.g},${rgb.b}, ${op}) 0%, 
+                rgba(${rgb.r},${rgb.g},${rgb.b}, ${op*0.9}) 50%, 
+                rgba(${rgb.r},${rgb.g},${rgb.b}, ${Math.min(1, op + 0.1)}) 100%)`;
+
+            // Append to DOM first so QR code library can find the element
+            container.appendChild(clone);
+
+            // Generate QR (CORRECTED: use lower error correction level to avoid overflow)
+            qrContainer.innerHTML = '';
+            new QRCode(qrContainer, {
+                text: ticketData.qrData,
+                width: 256,
+                height: 256,
+                colorDark : state.colAccent,
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.L   // ← Niveau L pour plus de capacité
+            });
+        }
+
+        /**
+         * EXPORT LOGIC
+         */
+        async function downloadAllTickets() {
+            // Validation
+            if (state.qty > 500) {
+                alert("Maximum 500 tickets à la fois pour garantir la stabilité.");
+                return;
+            }
+
+            // Init UI
+            ui.loadingOverlay.classList.remove('hidden');
+            ui.progressTotal.innerText = state.qty;
+            ui.progressBar.style.width = '0%';
+            
+            const zip = new JSZip();
+            const folder = zip.folder(`tickets_${state.event.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`);
+
+            try {
+                for (let i = 0; i < state.qty; i++) {
+                    const currentId = state.startId + i;
+                    const uid = generateUID();
+                    // QR content simplifié pour rester court
+                    const qrContent = `TICKET-${currentId}-${uid}`;
+
+                    // Update UI Progress text
+                    ui.progressText.innerText = i + 1;
+                    const percent = ((i + 1) / state.qty) * 100;
+                    ui.progressBar.style.width = `${percent}%`;
+
+                    // Render to hidden export stage
+                    renderTicket(ui.exportStage, {
+                        id: currentId,
+                        uid: uid,
+                        qrData: qrContent
+                    });
+
+                    // Wait a tick for DOM to settle and images to render
+                    await new Promise(r => setTimeout(r, 80));
+
+                    // Capture
+                    // We select the .iri-ticket inside the exportStage
+                    const ticketElement = ui.exportStage.querySelector('.iri-ticket');
+                    
+                    const canvas = await html2canvas(ticketElement, {
+                        scale: 2, // 2x for Retina/High Quality
+                        useCORS: true,
+                        logging: false,
+                        backgroundColor: null,
+                        width: 900, // Explicitly match CSS width
+                        height: 480, // Explicitly match CSS height
+                        windowWidth: 1200 // Simulate desktop window
+                    });
+
+                    // Convert to Blob
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    
+                    // Add to zip
+                    folder.file(`ticket_${currentId}.png`, blob);
+                }
+
+                // Generate and download ZIP
+                const content = await zip.generateAsync({ type: "blob" });
+                saveAs(content, `IRIEtick_Export_${Date.now()}.zip`);
+
+            } catch (err) {
+                console.error(err);
+                alert("Une erreur est survenue lors de l'export: " + err.message);
+            } finally {
+                // Cleanup
+                ui.loadingOverlay.classList.add('hidden');
+                ui.exportStage.innerHTML = ''; // Clear offscreen
+            }
+        }
+
+        // Utility: Generate pseudo-random UID
+        function generateUID() {
+            return Math.random().toString(36).substr(2, 9).toUpperCase();
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
